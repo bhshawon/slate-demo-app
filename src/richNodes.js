@@ -25,6 +25,11 @@ const richNodes = {
   },
   li: {
     render: (attributes, children) => <li {...attributes}>{children}</li>
+  },
+  image: {
+    render: (attributes, children, node) => {
+      return <img alt="" src={node.data.get('source')} {...attributes}></img>;
+    }
   }
 }
 

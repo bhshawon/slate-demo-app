@@ -3,19 +3,24 @@ import { Editor } from 'slate-react'
 import { Value } from 'slate'
 import richNodes from './richNodes';
 import richMarks from './richMarks';
+import { lookup } from 'mime-types'
+
+const DEFAULT_NODE_TYPE = 'paragraph';
+const LIST_ITEM_NODE_TYPE = 'li';
+const DOC_STORAGE_KEY = 'slate-doc';
 
 const initialValue = Value.fromJSON({
   document: {
     nodes: [
       {
         object: 'block',
-        type: 'paragraph',
+        type: DEFAULT_NODE_TYPE,
         nodes: [
           {
             object: 'text',
             leaves: [
               {
-                text: 'A line of text in a paragraph.',
+                text: 'Start writing!',
               },
             ],
           },
@@ -28,12 +33,23 @@ const initialValue = Value.fromJSON({
 class App extends Component {
   constructor() {
     super();
+    this.onValueChange = this.onValueChange.bind(this);
+    this.onKeyDown = this.onKeyDown.bind(this);
     this.onMarkClick = this.onMarkClick.bind(this);
     this.isMarkActive = this.isMarkActive.bind(this);
+    this.openFileBrowser = this.openFileBrowser.bind(this);
+    this.handleImage = this.handleImage.bind(this);
+    this.handleSave = this.handleSave.bind(this);
+    this.handleCancel = this.handleCancel.bind(this);
+    this.handleMaxTopNodes = this.handleMaxTopNodes.bind(this);
   }
+
+  renderOptions = {}
 
   state = {
     value: initialValue,
+    maxTopNodes: '',
+    saveActive: true
   }
 
   ref = editor => {
@@ -41,12 +57,18 @@ class App extends Component {
   }
 
   // On change, update the app's React state with the new editor value.
-  onChange = ({ value }) => {
-    this.setState({ value })
+  onValueChange = ({ value }) => {
+    const currentNodeCount = value.document.nodes.size;
+    const saveActive = !this.state.maxTopNodes || currentNodeCount <= this.state.maxTopNodes;
+    this.setState({ value, saveActive })
   }
 
   onKeyDown = (event, editor, next) => {
+    const { value } = this.state;
     let markToggled;
+    if (event.keyCode === 9 && value.blocks.some(node => node.type === LIST_ITEM_NODE_TYPE)) {
+      this.handleTabbedList(event, editor);
+    }
     Object
       .entries(richMarks)
       .forEach(([key, richMark]) => {
@@ -59,6 +81,31 @@ class App extends Component {
     if (!markToggled) {
       return next();
     }
+  }
+
+  handleTabbedList = (event, editor) => {
+    const { value } = this.state;
+    event.preventDefault();
+    const parent = value.document.getParent(value.blocks.first().key);
+    const grandParent = parent && value.document.getParent(parent.key);
+
+    // If Shift+Tab is pressed, go down indentation level
+    if (event.shiftKey) {
+      editor.unwrapBlock(parent.type);
+      if (!this.isListNode(grandParent)) {
+        editor.setBlocks(DEFAULT_NODE_TYPE);
+      }
+    } else {
+      const grandGrandParent = grandParent && value.document.getParent(grandParent.key);
+      // If current indentation level is less than 3, create nested list
+      if (this.isListNode(parent) && !(this.isListNode(grandParent) && this.isListNode(grandGrandParent))) {
+        editor.wrapBlock(parent.type)
+      }
+    }
+  }
+
+  isListNode = node => {
+    return node && richNodes[node.type] && richNodes[node.type].list;
   }
 
   onMarkClick = markType => {
@@ -85,7 +132,7 @@ class App extends Component {
       this.handleListBlock(nodeType);
     } else {
       if (this.isBlockActive(nodeType)) {
-        this.editor.setBlocks({ type: 'paragraph' });
+        this.editor.setBlocks({ type: DEFAULT_NODE_TYPE });
       } else {
         this.editor.setBlocks({ type: nodeType });
       }
@@ -95,7 +142,7 @@ class App extends Component {
   handleListBlock = nodeType => {
     const editor = this.editor;
     const blocks = this.state.value.blocks;
-    const isList = blocks && blocks.some(node => node.type === 'li');
+    const isList = blocks && blocks.some(node => node.type === LIST_ITEM_NODE_TYPE);
     const isType = blocks && blocks.some(block => {
       return !!editor.value.document.getClosest(block.key, parent => parent.type === nodeType)
     });
@@ -105,7 +152,7 @@ class App extends Component {
 
     if (isList && isType) {
       editor
-        .setBlocks({ type: 'paragraph' })
+        .setBlocks({ type: DEFAULT_NODE_TYPE })
 
       listNodes.forEach(([type]) => editor.unwrapBlock(type))
     } else if (isList) {
@@ -115,7 +162,7 @@ class App extends Component {
 
       editor.wrapBlock(nodeType)
     } else {
-      editor.setBlocks('li').wrapBlock(nodeType)
+      editor.setBlocks(LIST_ITEM_NODE_TYPE).wrapBlock(nodeType)
     }
   }
 
@@ -125,15 +172,53 @@ class App extends Component {
     const richNode = richNodes[node.type];
 
     if (richNode) {
-      return richNode.render(attributes, children, editor);
+      return richNode.render(attributes, children, node);
     } else {
       return next();
     }
   }
 
+  openFileBrowser = () => {
+    this.fileInput.click();
+  }
+
+  handleImage = event => {
+    if (this.isImage(event)) {
+      const file = event.target.files[0];
+      const reader = new FileReader()
+      reader.onload = () => {
+        this.editor.insertBlock({ type: 'image', data: { source: reader.result } });
+        this.editor.insertBlock(DEFAULT_NODE_TYPE);
+      }
+      reader.readAsDataURL(file);
+    }
+  }
+
+  isImage = event => {
+    return event.target.files && lookup(event.target.files[0].name).split('/')[0] === 'image';
+  }
+
+  handleSave = () => {
+    localStorage.setItem(DOC_STORAGE_KEY, JSON.stringify(this.state.value.toJSON()));
+  }
+
+  handleCancel = () => {
+    const storedDoc = localStorage.getItem(DOC_STORAGE_KEY);
+    if (storedDoc) {
+      const value = Value.fromJSON(JSON.parse(storedDoc));
+      this.setState({ value })
+    } else {
+      this.setState({ value: Value.fromJSON(initialValue) })
+    }
+  }
+
+  handleMaxTopNodes = event => {
+    this.setState({ maxTopNodes: event.target.value });
+  }
+
   render() {
     return (
-      <div>
+      <div style={{ margin: '50px' }}>
         <div>
           {
             Object.entries(richMarks).map(([key, richMark]) =>
@@ -159,11 +244,28 @@ class App extends Component {
                 </button>
               )
           }
+          <button onClick={this.openFileBrowser} className='btn-inactive'><i className="material-icons">image</i></button>
+
+          <span style={{ width: '20px', display: 'inline-block' }}></span>
+
+          <button onClick={this.handleSave} className={this.state.saveActive ? 'btn-active' : 'btn-inactive'}>
+            <i className="material-icons">save</i>
+          </button>
+          <button onClick={this.handleCancel} className='btn-active'><i className="material-icons">cancel</i></button>
+
+          <input type='number' onChange={this.handleMaxTopNodes} placeholder="Max top nodes" />
+
+          <input
+            type="file"
+            className="hidden"
+            onChange={this.handleImage}
+            ref={input => this.fileInput = input}
+          />
         </div>
         <Editor
           autoFocus
           value={this.state.value}
-          onChange={this.onChange}
+          onChange={this.onValueChange}
           onKeyDown={this.onKeyDown}
           renderMark={this.renderMark}
           renderNode={this.renderNode}

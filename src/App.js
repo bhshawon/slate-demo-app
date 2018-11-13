@@ -107,7 +107,12 @@ class App extends Component {
       const grandGrandParent = grandParent && value.document.getParent(grandParent.key);
       // If current indentation level is less than 3, create nested list
       if (this.isListNode(parent) && !(this.isListNode(grandParent) && this.isListNode(grandGrandParent))) {
-        editor.wrapBlock(parent.type)
+        const sibling = value.document.getPreviousSibling(value.blocks.first().key);
+        if (sibling && richNodes[sibling.type] && richNodes[sibling.type].list) {
+          editor.insertNodeByKey(sibling.key, sibling.nodes.size, value.blocks.first()).delete();
+        } else {
+          editor.wrapBlock(parent.type);
+        }
       }
     }
   }
@@ -133,8 +138,14 @@ class App extends Component {
     }
   }
 
-  isBlockActive = nodeType => this.state.value.anchorBlock && this.state.value.anchorBlock.type === nodeType
-
+  isBlockActive = nodeType => {
+    if (this.isListItem() && richNodes[nodeType] && richNodes[nodeType].list) {
+      const { value } = this.state;
+      const parent = value.document.getParent(value.blocks.first().key);
+      return nodeType === parent.type;
+    }
+    return this.state.value.anchorBlock && this.state.value.anchorBlock.type === nodeType
+  }
   onBlockClick = nodeType => {
     if (richNodes[nodeType] && richNodes[nodeType].list) {
       this.handleListBlock(nodeType);
@@ -147,10 +158,14 @@ class App extends Component {
     }
   }
 
+  isListItem = () => {
+    const blocks = this.state.value.blocks;
+    return blocks && blocks.some(node => node.type === LIST_ITEM_NODE_TYPE);
+  }
+
   handleListBlock = nodeType => {
     const editor = this.editor;
     const blocks = this.state.value.blocks;
-    const isList = blocks && blocks.some(node => node.type === LIST_ITEM_NODE_TYPE);
     const isType = blocks && blocks.some(block => {
       return !!editor.value.document.getClosest(block.key, parent => parent.type === nodeType)
     });
@@ -158,12 +173,16 @@ class App extends Component {
       .entries(richNodes)
       .filter(([_, richNode]) => richNode.list)
 
-    if (isList && isType) {
+    if (this.isListItem() && isType) {
+      for (let i = 0; i < 3; i++) {
+        editor.unwrapBlock(nodeType);
+      }
+
       editor
         .setBlocks({ type: DEFAULT_NODE_TYPE })
 
       listNodes.forEach(([type]) => editor.unwrapBlock(type))
-    } else if (isList) {
+    } else if (this.isListItem()) {
       listNodes
         .filter(([type]) => type !== nodeType)
         .forEach(([type]) => editor.unwrapBlock(type))
@@ -191,6 +210,7 @@ class App extends Component {
   }
 
   handleImage = event => {
+    event.preventDefault();
     if (this.isImage(event)) {
       const file = event.target.files[0];
       const reader = new FileReader()
@@ -199,6 +219,7 @@ class App extends Component {
         this.editor.insertBlock(DEFAULT_NODE_TYPE);
       }
       reader.readAsDataURL(file);
+      event.target.value = '';
     }
   }
 
@@ -206,8 +227,18 @@ class App extends Component {
     return event.target.files && lookup(event.target.files[0].name).split('/')[0] === 'image';
   }
 
+  linkImage = () => {
+    const imageUrl = prompt('Enter the URL of the image:');
+    if (imageUrl) {
+      this.editor.insertBlock({ type: 'image', data: { source: imageUrl } });
+      this.editor.insertBlock(DEFAULT_NODE_TYPE);
+    }
+  }
+
   handleSave = () => {
-    localStorage.setItem(DOC_STORAGE_KEY, JSON.stringify(this.state.value.toJSON()));
+    if (this.state.saveActive) {
+      localStorage.setItem(DOC_STORAGE_KEY, JSON.stringify(this.state.value.toJSON()));
+    }
   }
 
   handleCancel = () => {
@@ -226,7 +257,7 @@ class App extends Component {
 
   render() {
     return (
-      <div style={{ margin: '50px' }}>
+      <div className='rich-editor'>
         <div>
           {
             Object.entries(richMarks).map(([key, richMark]) =>
@@ -252,7 +283,11 @@ class App extends Component {
                 </button>
               )
           }
-          <button onClick={this.openFileBrowser} className='btn-inactive'><i className="material-icons">image</i></button>
+          <span style={{ width: '20px', display: 'inline-block' }}></span>
+
+          <button className='btn-inactive divider-right'><i className="material-icons">image</i></button>
+          <button onClick={this.openFileBrowser} className='btn-active'><i className="material-icons">cloud_upload</i></button>
+          <button onClick={this.linkImage} className='btn-active'><i className="material-icons">link</i></button>
 
           <span style={{ width: '20px', display: 'inline-block' }}></span>
 
@@ -271,7 +306,9 @@ class App extends Component {
           />
         </div>
         <Editor
+          className='editor'
           autoFocus
+          schema={schema}
           value={this.state.value}
           onChange={this.onValueChange}
           onKeyDown={this.onKeyDown}

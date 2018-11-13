@@ -62,3 +62,15 @@ blockquote {
   margin: 10px;
   padding: 10px;
 }
+
+.divider-right {
+  border-right: 1px solid darkgray;
+}
+
+.rich-editor {
+  margin: 20px;
+}
+
+.editor {
+  margin: 10px;
+}

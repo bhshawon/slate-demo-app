@@ -28,7 +28,15 @@ const initialValue = Value.fromJSON({
       },
     ],
   },
-})
+});
+
+const schema = {
+  blocks: {
+    image: {
+      isVoid: true
+    }
+  }
+}
 
 class App extends Component {
   constructor() {
